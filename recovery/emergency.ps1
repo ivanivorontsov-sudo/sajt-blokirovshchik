@@ -1,9 +1,12 @@
 # Блокировщик сайтов — АВАРИЙНОЕ ВОССТАНОВЛЕНИЕ.
 # Для случая, когда программа сломалась и блокировка не снимается обычным путём (пароль утерян, служба не отвечает).
+# ВАЖНО: скрипт НЕ использует reg.exe / regedit / .reg — поэтому работает даже при включённом запрете редактирования
+# реестра (DisableRegistryTools). Всё делается через провайдер реестра PowerShell и Win32 API (RegLoadKey), которые
+# от этой политики не зависят.
 # Делает: возвращает администраторам доступ к папкам и ключу службы, останавливает и удаляет службу, убирает автозапуск,
-# удаляет политики блокировки браузеров у всех учёток-целей (в т.ч. подгружает их куст реестра), снимает правила
-# брандмауэра, удаляет ярлыки и файлы программы. Настройки (%ProgramData%\SiteBlocker) НЕ удаляет.
-# Служба защищена от администратора, поэтому при отказе sc.exe служба отключается/удаляется через реестр.
+# удаляет политики блокировки браузеров у всех учёток-целей (в т.ч. подгружает их куст реестра через API), снимает
+# правила брандмауэра, удаляет ярлыки и файлы программы. Настройки (%ProgramData%\SiteBlocker) НЕ удаляет.
+# Служба защищена от администратора, поэтому при отказе sc.exe служба отключается/удаляется через провайдер реестра.
 # Нужны права администратора. Если блокировка «висит» — запускайте в БЕЗОПАСНОМ РЕЖИМЕ (см. README-восстановление.txt).
 param([switch]$Yes, [switch]$NoPause)
 
@@ -21,9 +24,39 @@ function Say($t,$c='Gray'){ Write-Host $t -ForegroundColor $c }
 
 Say 'Блокировщик сайтов — аварийное восстановление' 'Cyan'
 Say 'Будут удалены служба, автозапуск, файлы и политики блокировки браузеров. Настройки сохранятся.'
+Say 'Скрипт не использует regedit/reg.exe и работает при запрете редактирования реестра.'
 if (-not $Yes) { $ans=Read-Host 'Продолжить? [д/Н]'; if ($ans -notmatch '^(д|да|y|yes)$') { Say 'Отменено.'; exit 1 } }
 
-# Пути политик Chromium (подпути под Software\Policies) и Firefox.
+# --- Win32 API для загрузки/выгрузки кустов реестра без reg.exe (не зависит от DisableRegistryTools) ---
+$native = @'
+using System;
+using System.Runtime.InteropServices;
+public static class NativeReg {
+    [DllImport("advapi32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    public static extern int RegLoadKeyW(UIntPtr hKey, string lpSubKey, string lpFile);
+    [DllImport("advapi32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    public static extern int RegUnLoadKeyW(UIntPtr hKey, string lpSubKey);
+    [DllImport("advapi32.dll", SetLastError=true)]
+    static extern bool OpenProcessToken(IntPtr h, uint acc, out IntPtr tok);
+    [DllImport("advapi32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    static extern bool LookupPrivilegeValue(string host, string name, out long luid);
+    [DllImport("advapi32.dll", SetLastError=true)]
+    static extern bool AdjustTokenPrivileges(IntPtr tok, bool dis, ref TOKEN_PRIVILEGES np, uint len, IntPtr prev, IntPtr plen);
+    [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+    [StructLayout(LayoutKind.Sequential)] struct TOKEN_PRIVILEGES { public uint Count; public long Luid; public uint Attributes; }
+    public static readonly UIntPtr HKEY_USERS = unchecked((UIntPtr)0x80000003);
+    public static bool EnablePriv(string name) {
+        IntPtr tok;
+        if (!OpenProcessToken(GetCurrentProcess(), 0x20|0x8, out tok)) return false;
+        long luid; if (!LookupPrivilegeValue(null, name, out luid)) return false;
+        var tp = new TOKEN_PRIVILEGES { Count=1, Luid=luid, Attributes=0x2 };
+        return AdjustTokenPrivileges(tok, false, ref tp, 0, IntPtr.Zero, IntPtr.Zero);
+    }
+}
+'@
+try { Add-Type -TypeDefinition $native -ErrorAction Stop } catch { Say ('  не удалось подготовить API реестра: '+$_.Exception.Message) 'Yellow' }
+try { [NativeReg]::EnablePriv('SeBackupPrivilege') | Out-Null; [NativeReg]::EnablePriv('SeRestorePrivilege') | Out-Null } catch {}
+
 $chromium=@('Microsoft\Edge','Google\Chrome','Chromium','Vivaldi','BraveSoftware\Brave','YandexBrowser','Opera Software\Opera')
 $loaded=@{}
 function Resolve-UserHive([string]$sid) {
@@ -32,8 +65,8 @@ function Resolve-UserHive([string]$sid) {
     $prof=(Get-ItemProperty ("HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$sid") -ErrorAction SilentlyContinue).ProfileImagePath
     if ($prof -and (Test-Path (Join-Path $prof 'NTUSER.DAT'))) {
         $tag='SB_'+$sid
-        & reg.exe load ("HKU\$tag") (Join-Path $prof 'NTUSER.DAT') | Out-Null
-        if ($LASTEXITCODE -eq 0) { $loaded[$sid]=$tag; return "Registry::HKEY_USERS\$tag" }
+        try { $rc=[NativeReg]::RegLoadKeyW([NativeReg]::HKEY_USERS, $tag, (Join-Path $prof 'NTUSER.DAT')) } catch { $rc=-1 }
+        if ($rc -eq 0) { $loaded[$sid]=$tag; return "Registry::HKEY_USERS\$tag" }
     }
     return $null
 }
@@ -52,11 +85,11 @@ function Clear-PoliciesForHive([string]$hiveRoot) {
     Remove-Item -Path "$ff\DNSOverHTTPS" -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-# 0. Доступ администраторам к папкам программы и данных.
+# 0. Доступ администраторам к папкам программы и данных (icacls запретом реестра не блокируется).
 Say '0) Права на папки…'
 foreach ($d in @($InstallDir,$DataDir)) { if (Test-Path $d) { & icacls.exe $d /setowner '*S-1-5-32-544' /T /C /Q 2>$null | Out-Null; & icacls.exe $d /grant '*S-1-5-32-544:(OI)(CI)F' /T /C /Q 2>$null | Out-Null; Say "  доступ возвращён: $d" } }
 
-# 1. Служба.
+# 1. Служба (sc.exe разрешён; ключ при отказе чистим через провайдер реестра PowerShell).
 Say '1) Служба…'
 & sc.exe stop $ServiceName 2>$null | Out-Null; Start-Sleep 2
 Get-Process -Name 'SiteBlocker' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
@@ -81,7 +114,7 @@ foreach ($sid in $targets) {
     $h=Resolve-UserHive $sid
     if ($h) { Clear-PoliciesForHive $h; Say "  очищено для $sid" } else { Say "  куст недоступен: $sid" 'Yellow' }
 }
-foreach ($sid in @($loaded.Keys)) { [gc]::Collect(); & reg.exe unload ("HKU\$($loaded[$sid])") | Out-Null }
+foreach ($sid in @($loaded.Keys)) { [gc]::Collect(); try { [NativeReg]::RegUnLoadKeyW([NativeReg]::HKEY_USERS, $loaded[$sid]) | Out-Null } catch {} }
 
 # 3. Брандмауэр.
 Say '3) Правила брандмауэра…'
