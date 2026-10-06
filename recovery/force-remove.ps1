@@ -99,6 +99,7 @@ L 'failure actions и автозапуск отключены'
 for ($i=0; $i -lt 5; $i++) {
     $procs = Get-Process -Name 'SiteBlocker' -ErrorAction SilentlyContinue
     if (-not $procs) { break }
+    & taskkill.exe /F /IM SiteBlocker.exe /T 2>$null | Out-Null
     $procs | ForEach-Object { try { Stop-Process -Id $_.Id -Force -ErrorAction Stop; L ('убит процесс PID '+$_.Id) } catch { L ('kill PID '+$_.Id+': '+$_.Exception.Message) } }
     Start-Sleep -Milliseconds 400
 }
@@ -136,33 +137,64 @@ Set-Content -LiteralPath $sysScript -Value $payload -Encoding UTF8
 # --- Запустить payload как SYSTEM через планировщик ---
 L 'Запускаю удаление службы и файлов от имени SYSTEM (задача планировщика)…'
 $ranAsSystem = $false
+$taskName = 'SiteBlocker-ForceRemove'
 try {
-    $taskName = 'SiteBlocker-ForceRemove'
     $act = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "'+$sysScript+'"')
     $prin = New-ScheduledTaskPrincipal -UserId 'NT AUTHORITY\SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-    $task = New-ScheduledTask -Action $act -Principal $prin
+    # ВАЖНО: на ноутбуке задача по умолчанию НЕ стартует от батареи и зависает в статусе «В очереди».
+    # Разрешаем старт от батареи, не останавливаем при переходе на батарею, лимит 5 мин, без дублей.
+    $set = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -MultipleInstances IgnoreNew
+    $task = New-ScheduledTask -Action $act -Principal $prin -Settings $set
     Register-ScheduledTask -TaskName $taskName -InputObject $task -Force | Out-Null
+    L 'Задача зарегистрирована (разрешён запуск от батареи).'
     Start-ScheduledTask -TaskName $taskName
+    L 'Задача запущена, жду завершения (до 120 с)…'
     $deadline = (Get-Date).AddSeconds(120)
     while ((Get-Date) -lt $deadline -and -not (Test-Path $doneMark)) { Start-Sleep -Milliseconds 700 }
-    if (Test-Path $doneMark) { $ranAsSystem = $true; L 'Задача SYSTEM завершилась.' 'Green' } else { L 'Задача SYSTEM не подтвердила завершение за 120 с.' 'Yellow' }
-    Start-Sleep -Milliseconds 500
-    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+    if (Test-Path $doneMark) { $ranAsSystem = $true; L 'Задача SYSTEM завершилась.' 'Green' }
+    else {
+        $st = '?'; try { $st = (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue).State } catch {}
+        L ("Задача SYSTEM не подтвердила завершение за 120 с (состояние: $st) — перехожу к резерву.") 'Yellow'
+    }
 } catch {
-    L ('Не удалось выполнить через планировщик: '+$_.Exception.Message) 'Yellow'
+    L ('Не удалось создать/запустить задачу планировщика: '+$_.Exception.Message) 'Yellow'
 }
 
-# Резерв: если задача SYSTEM не отработала — пробуем те же шаги напрямую (админ; может не хватить прав на службу).
+# Очистка задачи — НЕ блокирующая: каждый шаг в своём try/catch и с логом.
+try { L 'Останавливаю задачу (если ещё идёт)…'; Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue } catch { L ('Stop-ScheduledTask: '+$_.Exception.Message) }
+try { L 'Удаляю задачу планировщика…'; Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue; L 'Задача удалена.' } catch { L ('Unregister-ScheduledTask: '+$_.Exception.Message) }
+
+# Резерв: если задача SYSTEM не отработала — те же шаги напрямую от администратора (с логом на каждый шаг).
 if (-not $ranAsSystem) {
     L 'Резерв: выполняю удаление напрямую от администратора…' 'Yellow'
-    & sc.exe failure $ServiceName reset= 0 actions= '""' 2>$null | Out-Null
-    & sc.exe config  $ServiceName start= disabled 2>$null | Out-Null
-    Get-Process -Name 'SiteBlocker' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-    & sc.exe delete  $ServiceName 2>$null | Out-Null
-    try { Remove-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run' -Name 'SiteBlocker' -ErrorAction SilentlyContinue } catch {}
-    try { Remove-Item $UninstKey -Recurse -Force -ErrorAction SilentlyContinue } catch {}
-    try { Remove-Item $StartMenu -Recurse -Force -ErrorAction SilentlyContinue } catch {}
-    foreach ($d in @($InstallDir,$DataDir)) { if (Test-Path $d) { & takeown.exe /f $d /r /d y 2>$null | Out-Null; & icacls.exe $d /grant '*S-1-5-32-544:(OI)(CI)F' /T /C /Q 2>$null | Out-Null; Remove-Item $d -Recurse -Force -ErrorAction SilentlyContinue } }
+    try { & sc.exe failure $ServiceName reset= 0 actions= '""' 2>$null | Out-Null; L '  failure actions отключены' } catch { L ('  sc failure: '+$_.Exception.Message) }
+    try { & sc.exe config  $ServiceName start= disabled 2>$null | Out-Null; L '  автозапуск службы отключён' } catch { L ('  sc config: '+$_.Exception.Message) }
+    try { & taskkill.exe /F /IM SiteBlocker.exe /T 2>$null | Out-Null } catch {}
+    try { Get-Process -Name 'SiteBlocker' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue; L '  процессы завершены' } catch { L ('  kill: '+$_.Exception.Message) }
+    try { & sc.exe delete $ServiceName 2>$null | Out-Null; L '  sc delete выполнен' } catch { L ('  sc delete: '+$_.Exception.Message) }
+    $SvcKey = 'HKLM:\SYSTEM\CurrentControlSet\Services\SiteBlocker'
+    if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
+        try {
+            L '  возвращаю администраторам права на ключ службы и удаляю его…'
+            $admins = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-544')
+            $acl = Get-Acl -Path $SvcKey; $acl.SetOwner($admins); Set-Acl -Path $SvcKey -AclObject $acl
+            $acl = Get-Acl -Path $SvcKey
+            $acl.AddAccessRule((New-Object System.Security.AccessControl.RegistryAccessRule($admins,'FullControl','ContainerInherit','None','Allow')))
+            Set-Acl -Path $SvcKey -AclObject $acl
+            Remove-Item -Path $SvcKey -Recurse -Force -ErrorAction Stop
+            L '  ключ службы удалён (эффект после перезагрузки)'
+        } catch { L ('  ключ службы: '+$_.Exception.Message+' — потребуется перезагрузка или безопасный режим') }
+    }
+    try { Remove-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run' -Name 'SiteBlocker' -ErrorAction SilentlyContinue; L '  HKLM Run снят' } catch {}
+    try { Remove-Item $UninstKey -Recurse -Force -ErrorAction SilentlyContinue; L '  ключ Uninstall удалён' } catch {}
+    try { Remove-Item $StartMenu -Recurse -Force -ErrorAction SilentlyContinue; L '  ярлыки удалены' } catch {}
+    foreach ($d in @($InstallDir,$DataDir)) {
+        if (-not (Test-Path $d)) { continue }
+        try { & takeown.exe /f $d /r /d y 2>$null | Out-Null; & icacls.exe $d /grant '*S-1-5-32-544:(OI)(CI)F' /T /C /Q 2>$null | Out-Null } catch {}
+        Remove-Item $d -Recurse -Force -ErrorAction SilentlyContinue
+        if (Test-Path $d) { L ('  не удалось удалить '+$d) } else { L ('  удалено: '+$d) }
+    }
+    L 'Резерв завершён.'
 }
 
 Remove-Item $sysScript -ErrorAction SilentlyContinue
