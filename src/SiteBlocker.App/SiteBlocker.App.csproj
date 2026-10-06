@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- UI-окно (WPF) в сеансе пользователя. Тот же SiteBlocker.exe с ключом service работает как служба. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>SiteBlocker</AssemblyName>
+    <RootNamespace>SiteBlocker.App</RootNamespace>
+    <StartupObject>SiteBlocker.App.Program</StartupObject>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\siteblocker.ico</ApplicationIcon>
+    <Product>Блокировщик сайтов</Product>
+    <Company>Блокировщик сайтов</Company>
+    <Description>Блокировщик сайтов — блокировка сайтов во всех браузерах с разблокировкой по паролю</Description>
+    <Copyright>© 2026</Copyright>
+    <NeutralLanguage>ru-RU</NeutralLanguage>
+    <SatelliteResourceLanguages>ru</SatelliteResourceLanguages>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <NoWarn>$(NoWarn);WFAC010</NoWarn>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' != ''">
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\siteblocker.ico" LogicalName="siteblocker.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SiteBlocker.Core\SiteBlocker.Core.csproj" />
+    <ProjectReference Include="..\SiteBlocker.Service\SiteBlocker.Service.csproj" />
+  </ItemGroup>
+</Project>
