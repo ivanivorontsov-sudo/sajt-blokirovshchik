@@ -61,6 +61,20 @@ public static unsafe class Native
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool GetNamedPipeClientProcessId(IntPtr pipe, out uint pid);
 
+    // --- Идентификация клиента канала по PID (без имперсонации; работает при любом уровне токена и в lockdown) ---
+    public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+    public const uint TOKEN_QUERY = 0x0008;
+    public const int TokenUser = 1;
+    public const int TokenElevation = 20;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    public static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+    // Буферный вариант GetTokenInformation (для TokenUser → TOKEN_USER со PSID).
+    [DllImport("advapi32.dll", SetLastError = true)]
+    public static extern bool GetTokenInformation(IntPtr token, int cls, IntPtr buffer, int len, out int retLen);
+
     // Смещения в WTSINFOEXW (x64 и x86 одинаково: объединение выровнено по 8 из-за LARGE_INTEGER):
     // Level @0, Data @8 → SessionId @8, SessionState @12, SessionFlags @16, WinStationName @20, UserName @86.
     public const int WTSINFOEX_LEVEL_OFFSET = 0;

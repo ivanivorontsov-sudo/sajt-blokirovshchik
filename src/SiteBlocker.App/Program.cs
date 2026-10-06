@@ -65,11 +65,8 @@ public static class Program
     {
         using var pc = new PipeClient();
         if (string.IsNullOrEmpty(token)) token = ReadTokenFile();
-        if (string.IsNullOrEmpty(token))
-        {
-            Console.Error.WriteLine("Нет разрешения. Откройте «Блокировщик сайтов», введите пароль и нажмите «Разрешить удаление/обновление».");
-            return 2;
-        }
+        // Токен может отсутствовать — это нормально, если блокировщик ещё не настроен: решение принимает служба
+        // (несконфигурированную/сломанную установку можно обслуживать без пароля). Пустой токен тоже отправляем.
         var b = pc.Request(new IpcRequest { Cmd = Ipc.CmdBeginMaint, Token = token });
         if (b == null) { Console.Error.WriteLine("Служба не отвечает: " + pc.LastError); return 3; }
         if (!b.Ok) { Console.Error.WriteLine(b.Error ?? "Отказано."); return 2; }

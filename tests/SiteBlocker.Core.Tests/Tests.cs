@@ -182,3 +182,28 @@ public class PolicyEngineTests
         Assert.True(e.IsAnyPresent(other)); // чужая учётка не затронута
     }
 }
+
+
+public class MaintenanceGateTests
+{
+    [Fact]
+    public void NotElevatedAlwaysRefused()
+    {
+        Assert.Equal(MaintGate.NotElevated, MaintenanceGate.Decide(elevated: false, configured: false, hasValidToken: false));
+        Assert.Equal(MaintGate.NotElevated, MaintenanceGate.Decide(elevated: false, configured: true, hasValidToken: true));
+    }
+
+    [Fact]
+    public void UnconfiguredAllowedWithoutToken()
+    {
+        // Сломанная/пустая установка всегда удаляема администратором (пароль ещё не задан).
+        Assert.Equal(MaintGate.Allow, MaintenanceGate.Decide(elevated: true, configured: false, hasValidToken: false));
+    }
+
+    [Fact]
+    public void ConfiguredNeedsToken()
+    {
+        Assert.Equal(MaintGate.NeedToken, MaintenanceGate.Decide(elevated: true, configured: true, hasValidToken: false));
+        Assert.Equal(MaintGate.Allow, MaintenanceGate.Decide(elevated: true, configured: true, hasValidToken: true));
+    }
+}

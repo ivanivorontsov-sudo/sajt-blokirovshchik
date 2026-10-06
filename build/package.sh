@@ -3,7 +3,7 @@
 # Использование: build/package.sh [--no-publish]
 set -euo pipefail
 cd "$(dirname "$0")/.."
-VER=1.0.0
+VER=1.0.1
 NAME="SiteBlocker-Windows-$VER"
 DOTNET="${DOTNET:-/home/box/dotnet/dotnet}"
 export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1

@@ -387,11 +387,29 @@ public sealed class GuardWorker : IDisposable
         }
     }
 
+    public bool IsConfigured()
+    {
+        try
+        {
+            var mc = DataLayout.LoadMachine(DataDir);
+            return !string.IsNullOrEmpty(mc.OwnerSid) && new Store(Paths.UserDataDir(mc.OwnerSid)).LoadAuth() != null;
+        }
+        catch { return false; }
+    }
+
     public string? BeginMaintenance(string? token, string requester, bool elevated)
     {
-        if (!elevated) return "Режим обслуживания включает только установщик от имени администратора.";
-        if (string.IsNullOrEmpty(token) || !Tokens.Consume(token!, MaintenanceTokens.Maintenance))
-            return "Нет разрешения. Откройте «Блокировщик сайтов», введите пароль и нажмите «Разрешить удаление/обновление» (действует 15 минут).";
+        bool configured = IsConfigured();
+        // Токен проверяем/расходуем только если блокировщик настроен (иначе сломанную установку не удалить без пароля).
+        bool hasValidToken = configured && !string.IsNullOrEmpty(token) && Tokens.Consume(token!, MaintenanceTokens.Maintenance);
+        switch (MaintenanceGate.Decide(elevated, configured, hasValidToken))
+        {
+            case MaintGate.NotElevated:
+                return "Режим обслуживания включает только установщик от имени администратора.";
+            case MaintGate.NeedToken:
+                return "Нет разрешения. Откройте «Блокировщик сайтов», введите пароль и нажмите «Разрешить удаление/обновление» (действует 15 минут).";
+        }
+        if (!configured) Log.Write("обслуживание разрешено без пароля: блокировщик ещё не настроен");
         MaintenanceUntil = _clock.Wall() + MaintenanceTokens.DefaultTtlMs;
         Log.Write($"режим обслуживания включён ({requester}) до {DateTimeOffset.FromUnixTimeMilliseconds(MaintenanceUntil).ToLocalTime():HH:mm}");
         // Снять политики и ослабить защиту, чтобы установщик мог заменить файлы.

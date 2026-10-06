@@ -5,7 +5,7 @@
 param([switch]$NoPause)
 
 $ErrorActionPreference = 'Stop'
-$Version     = '1.0.0'
+$Version     = '1.0.1'
 $ServiceName = 'SiteBlocker'
 $DisplayName = 'Блокировщик сайтов'
 $InstallDir  = Join-Path $env:ProgramFiles 'SiteBlocker'
@@ -60,7 +60,15 @@ try {
     for($i=0;$i -lt 10 -and -not $ok;$i++){ try { Copy-Item (Join-Path $Src 'app\*') $InstallDir -Recurse -Force; $ok=$true } catch { Get-Process -Name 'SiteBlocker' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep 1 } }
     if (-not $ok) { throw 'Не удалось заменить файлы программы (заняты). Перезагрузите компьютер и повторите.' }
     foreach ($f in @('uninstall.ps1','Удалить.cmd','README.md')) { $p=Join-Path $Src $f; if (Test-Path $p) { Copy-Item $p $InstallDir -Force } }
-    if (Test-Path (Join-Path $Src 'recovery')) { Copy-Item (Join-Path $Src 'recovery') $InstallDir -Recurse -Force }
+    # Папка восстановления/удаления — копируем СОДЕРЖИМОЕ в $InstallDir\recovery (надёжно и при повторной установке).
+    $recSrc = Join-Path $Src 'recovery'
+    $recDst = Join-Path $InstallDir 'recovery'
+    if (Test-Path $recSrc) {
+        New-Item -ItemType Directory -Force -Path $recDst | Out-Null
+        Copy-Item (Join-Path $recSrc '*') $recDst -Recurse -Force
+        $n = (Get-ChildItem $recDst -File -ErrorAction SilentlyContinue | Measure-Object).Count
+        if ($n -gt 0) { Say "Скопированы средства восстановления ($n файлов) в $recDst" } else { Say 'Внимание: папка recovery пуста.' 'Yellow' }
+    } else { Say 'Внимание: папка recovery не найдена в дистрибутиве.' 'Yellow' }
     Get-ChildItem $InstallDir -Recurse -File | Unblock-File -ErrorAction SilentlyContinue
 
     if (-not (Test-Path $DataDir)) { New-Item -ItemType Directory -Force -Path $DataDir | Out-Null; Say "Создан каталог данных $DataDir" }

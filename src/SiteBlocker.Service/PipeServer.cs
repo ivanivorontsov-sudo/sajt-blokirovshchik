@@ -65,21 +65,33 @@ public sealed class PipeServer
                     if (!identified)
                     {
                         identified = true;
-                        try
+                        // Основной путь: PID клиента → токен процесса (без имперсонации; надёжно и в lockdown).
+                        var cid = ClientIdentity.Resolve(s.SafePipeHandle);
+                        clientSid = cid.Sid; clientElevated = cid.Elevated;
+                        string method = cid.Method;
+                        // Резерв 1: имперсонация клиента (после первого чтения). Логируем тип+HResult+Win32.
+                        if (clientSid == null)
                         {
-                            s.RunAsClient(() =>
+                            try
                             {
-                                try
+                                s.RunAsClient(() =>
                                 {
-                                    using var wi = WindowsIdentity.GetCurrent(true) ?? WindowsIdentity.GetCurrent();
-                                    clientSid = wi.User?.Value;
-                                    clientElevated = new WindowsPrincipal(wi).IsInRole(WindowsBuiltInRole.Administrator);
-                                }
-                                catch { }
-                            });
+                                    try
+                                    {
+                                        using var wi = WindowsIdentity.GetCurrent(true) ?? WindowsIdentity.GetCurrent();
+                                        clientSid = wi.User?.Value;
+                                        clientElevated = new WindowsPrincipal(wi).IsInRole(WindowsBuiltInRole.Administrator);
+                                        method = "impersonation";
+                                    }
+                                    catch (Exception e) { Log.Write("pipe impersonate-inner: " + ClientIdentity.Describe(e)); }
+                                });
+                            }
+                            catch (Exception e) { Log.Write("pipe impersonation: " + ClientIdentity.Describe(e) + (cid.Diag != null ? " [pid-диагностика: " + cid.Diag + "]" : "")); }
                         }
-                        catch (Exception e) { Log.Write("pipe impersonation: " + e.Message); }
-                        if (clientSid == null && sessionKnown) clientSid = Sessions.UserSid(session);
+                        // Резерв 2: SID по сессии канала.
+                        if (clientSid == null && sessionKnown) { clientSid = Sessions.UserSid(session); if (clientSid != null) method = "session"; }
+                        if (clientSid == null) Log.Write("клиент не опознан" + (cid.Diag != null ? ": " + cid.Diag : ""));
+                        else Log.Write($"клиент опознан: {DataLayout.SafeSid(clientSid)} elevated={clientElevated} (через {method})");
                     }
                     IpcResponse resp;
                     try { resp = Dispatch(Json.Deserialize<IpcRequest>(line) ?? new IpcRequest(), clientSid, clientElevated); }
