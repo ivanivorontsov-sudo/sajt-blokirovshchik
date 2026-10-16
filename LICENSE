@@ -1,0 +1,13 @@
+Copyright (c) 2026 Иван Воронцов (Ivan Vorontsov). Все права защищены. All rights reserved.
+
+«Блокировщик сайтов» для Windows
+
+RU. Программа (исходный код, сборки, графика, тексты и иные материалы проекта, кроме сторонних компонентов) является объектом исключительного права Ивана Воронцова (ст. 1259, 1261, 1270 ГК РФ). Разрешается бесплатно установить и использовать опубликованные автором сборки программы для личных некоммерческих целей. Без письменного согласия правообладателя запрещается копировать и распространять исходный код, изменять, декомпилировать и дизассемблировать программу (кроме случаев, прямо разрешённых ст. 1280 ГК РФ), распространять изменённые версии и использовать программу или её части в коммерческих целях.
+
+Программа предоставляется «как есть», без каких-либо гарантий. Правообладатель не отвечает за убытки, возникшие при её использовании, в пределах, допустимых применимым правом.
+
+Сторонние компоненты распространяются на условиях своих лицензий, перечисленных в файле THIRD_PARTY_NOTICES.md. Эти условия имеют приоритет для соответствующих компонентов.
+
+Упоминаемые названия сторонних продуктов и сервисов являются товарными знаками их правообладателей. Проект не связан с ними и не одобрен ими.
+
+EN. This software is proprietary. You may install and use builds published by the author free of charge for personal, non-commercial purposes. Any copying or redistribution of the source code, modification, reverse engineering (except where permitted by mandatory law), distribution of modified versions or commercial use requires prior written permission of the copyright holder. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. Third-party components are licensed under their own terms listed in THIRD_PARTY_NOTICES.md. Third-party names are trademarks of their respective owners; this project is not affiliated with or endorsed by them.
